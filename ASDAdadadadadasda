@@ -1,0 +1,92 @@
+using System.Collections;
+using TMPro;
+using UnityEditor.VersionControl;
+using UnityEngine;
+using UnityEngine.Networking;
+
+public class ProxyServerAI : MonoBehaviour
+{
+    public TMP_InputField inputField;
+    public TextMeshProUGUI responseText;
+
+    private string endpoint = "https://proxy-groq.onrender.com/chat";
+
+    public void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Return))
+        {
+            OnSendMessage();
+        }
+    }
+
+    public void OnSendMessage()
+    {
+        string message = inputField.text;
+        inputField.text = "";
+        if (!string.IsNullOrEmpty(message))
+        {
+            StartCoroutine(SendMessageToServer(message));
+        }
+    }
+    IEnumerator SendMessageToServer(string message)
+    {
+        responseText.text = "Думаю...";
+
+        string jsonBody = $"{{\"message\": \"{message} +  говори полностью русском языке\"}}";
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonBody);
+
+        UnityWebRequest request = new UnityWebRequest(endpoint, "POST");
+        request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+        request.downloadHandler = new DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+
+
+        yield return request.SendWebRequest();
+
+
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.Log("Error: " + request.error);
+            Debug.Log(request.downloadHandler.text);
+            responseText.text = "Error: " + request.error;
+        }
+        else
+        {
+            string result = request.downloadHandler.text;
+            Debug.Log("Response: " + result);
+            responseText.text = ParseResponse(result);
+        }
+    }
+
+    string ParseResponse(string json)
+    {
+        try
+        {
+            var root = JsonUtility.FromJson<GroqResponseWrapper>(json);
+            return root.choices[0].message.content;
+        }
+        catch
+        {
+            return "Не удалось";
+        }
+    }
+
+    [System.Serializable]
+    public class GroqResponseWrapper
+    {
+        public Choice[] choices;
+    }
+
+    [System.Serializable]
+    public class Choice
+    {
+        public Message message;
+    }
+
+    [System.Serializable]
+    public class Message
+    {
+        public string role;
+        public string content;
+    }
+}
