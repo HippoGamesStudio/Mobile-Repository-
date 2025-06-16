@@ -8,6 +8,7 @@ public class ProxyServerAI : MonoBehaviour
 {
     public TMP_InputField inputField;
     public TextMeshProUGUI responseText;
+    public Animator characterAnimator;
 
     private string endpoint = "https://proxy-groq.onrender.com/chat";
 
@@ -54,39 +55,38 @@ public class ProxyServerAI : MonoBehaviour
         {
             string result = request.downloadHandler.text;
             Debug.Log("Response: " + result);
-            responseText.text = ParseResponse(result);
+            try
+            {
+                var replyData = JsonUtility.FromJson<AIResponse>(result);
+                responseText.text = replyData.reply;
+                TriggerEmotion(replyData.emotion);
+            }
+            catch
+            {
+                responseText.text = "Не удалось";
+            }
+            
         }
     }
 
-    string ParseResponse(string json)
+    void TriggerEmotion(string emotion)
     {
-        try
+        Debug.Log("Эмоция: " + emotion);
+        switch (emotion.ToLower())
         {
-            var root = JsonUtility.FromJson<GroqResponseWrapper>(json);
-            return root.choices[0].message.content;
+            case "радость": characterAnimator.SetTrigger("Happy"); break;
+            case "грусть": characterAnimator.SetTrigger("Sad"); break;
+            case "злость": characterAnimator.SetTrigger("Angry"); break;
+            case "удивление": characterAnimator.SetTrigger("Surprised"); break;
+            default: characterAnimator.SetTrigger("Neutral"); break;
         }
-        catch
-        {
-            return "Не удалось";
-        }
     }
 
-    [System.Serializable]
-    public class GroqResponseWrapper
-    {
-        public Choice[] choices;
-    }
 
     [System.Serializable]
-    public class Choice
+    public class AIResponse
     {
-        public Message message;
-    }
-
-    [System.Serializable]
-    public class Message
-    {
-        public string role;
-        public string content;
+        public string reply;
+        public string emotion;
     }
 }
