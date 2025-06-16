@@ -5,7 +5,7 @@ using UnityEngine.Networking;
 
 public class AIgroq : MonoBehaviour
 {
-    public string apiKey = "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";
+    public string apiKey = "api-key";
     public string model = "mixtral-8x7b-32768";
     public TMP_InputField inputField;
     public TextMeshProUGUI responseText;
