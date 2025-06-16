@@ -1,0 +1,55 @@
+using UnityEngine;
+using TMPro;
+using System.Collections;
+using UnityEngine.Networking;
+
+public class AIgroq : MonoBehaviour
+{
+    public string apiKey = "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";
+    public string model = "mixtral-8x7b-32768";
+    public TMP_InputField inputField;
+    public TextMeshProUGUI responseText;
+
+    public void OnSendMessage()
+    {
+        string userInput = inputField.text;
+        StartCoroutine(SendMessageToBot(userInput));
+    }
+
+    IEnumerator SendMessageToBot(string userInput)
+    {
+        string json = $"{{\"model\": \"{model}\", \"messages\": [{{\"role\": \"user\", \"content\": \"{userInput}\"}}]}}";
+
+        using (UnityWebRequest request = new UnityWebRequest("https://api.groq.com/openai/v1/chat/completions", "POST"))
+        {
+            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+            request.SetRequestHeader("Authorization", "Bearer " + apiKey);
+
+            yield return request.SendWebRequest();
+
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.Log("Error: " + request.error);
+                responseText.text = "Error: " + request.error;
+            }
+            else
+            {
+                string result = request.downloadHandler.text;
+                Debug.Log("Response: " + result);
+                responseText.text = ParseResponse(result);
+            }
+        }
+    }
+
+    string ParseResponse(string json)
+    {
+        int start = json.IndexOf("\"content\":\"") + 11;
+        int end = json.IndexOf("\"", start);
+        string content = json.Substring(start, end - start);
+        return content.Replace("\\n", "\n"); 
+    }
+}
