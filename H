@@ -2,15 +2,17 @@ using UnityEngine;
 using Mirror;
 using System.Collections.Generic;
 
-public class SnakeHead : NetworkBehaviour
+public class ClassicSnakeHead : NetworkBehaviour
 {
-    public float moveSpeed = 2f;
-    public float turnSpeed = 90f;
     public GameObject bodySegmentPrefab;
-    public float segmentSpacing = 0.5f;
+    public float moveInterval = 0.2f; // шаг в секундах
+    public float gridSize = 1f;
 
     private List<Transform> bodySegments = new List<Transform>();
     private List<Vector3> positions = new List<Vector3>();
+
+    private float timer = 0f;
+    private Vector3 direction = Vector3.forward;
 
     void Start()
     {
@@ -24,40 +26,51 @@ public class SnakeHead : NetworkBehaviour
     {
         if (!isLocalPlayer) return;
 
-        float h = Input.GetAxisRaw("Horizontal");
-
-        // поворот влево/вправо
-        transform.Rotate(Vector3.up * h * turnSpeed * Time.deltaTime);
-
-        // всегда двигается вперёд
-        transform.Translate(Vector3.forward * moveSpeed * Time.deltaTime);
-
-        // записываем позицию головы
-        if (Vector3.Distance(transform.position, positions[positions.Count - 1]) > segmentSpacing)
+        // Управление
+        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
         {
-            positions.Add(transform.position);
+            if (direction != Vector3.right) direction = Vector3.left;
+        }
+        else if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
+        {
+            if (direction != Vector3.left) direction = Vector3.right;
+        }
+        else if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W))
+        {
+            if (direction != Vector3.back) direction = Vector3.forward;
+        }
+        else if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S))
+        {
+            if (direction != Vector3.forward) direction = Vector3.back;
         }
 
-        // обновляем позиции сегментов
+        // Движение по таймеру
+        timer += Time.deltaTime;
+        if (timer >= moveInterval)
+        {
+            timer = 0f;
+            Move();
+        }
+    }
+
+    void Move()
+    {
+        Vector3 newPosition = transform.position + direction * gridSize;
+
+        transform.position = newPosition;
+        positions.Insert(0, newPosition);
+
+        // Движение тела
         for (int i = 0; i < bodySegments.Count; i++)
         {
-            int index = Mathf.Clamp(positions.Count - 1 - (i + 1) * 5, 0, positions.Count - 1);
-            bodySegments[i].position = positions[index];
+            bodySegments[i].position = positions[Mathf.Clamp(i + 1, 0, positions.Count - 1)];
         }
-    }
 
-    [Command]
-    public void CmdAddSegment()
-    {
-        GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
-        NetworkServer.Spawn(segment);
-        RpcAddSegment(segment);
-    }
-
-    [ClientRpc]
-    void RpcAddSegment(GameObject segment)
-    {
-        bodySegments.Add(segment.transform);
+        // Ограничиваем размер списка
+        if (positions.Count > bodySegments.Count + 1)
+        {
+            positions.RemoveAt(positions.Count - 1);
+        }
     }
 
     private void OnTriggerEnter(Collider other)
@@ -80,7 +93,22 @@ public class SnakeHead : NetworkBehaviour
             CmdAddSegment();
         }
     }
+
+    [Command]
+    void CmdAddSegment()
+    {
+        GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
+        NetworkServer.Spawn(segment);
+        RpcAddSegment(segment);
+    }
+
+    [ClientRpc]
+    void RpcAddSegment(GameObject segment)
+    {
+        bodySegments.Add(segment.transform);
+    }
 }
+
 
 
 
@@ -92,23 +120,17 @@ public class SnakeFood : NetworkBehaviour
     public Vector2 spawnAreaMin = new Vector2(-10, -10);
     public Vector2 spawnAreaMax = new Vector2(10, 10);
 
-    public void Start()
+    public override void OnStartServer()
     {
-        if (isServer)
-        {
-            Respawn();
-        }
+        base.OnStartServer();
+        Respawn(); // ТОЛЬКО НА СЕРВЕРЕ
     }
 
     [Server]
     public void Respawn()
     {
-        Vector3 newPos = new Vector3(
-            Random.Range(spawnAreaMin.x, spawnAreaMax.x),
-            0.5f,
-            Random.Range(spawnAreaMax.y, spawnAreaMin.y)
-        );
-
-        transform.position = newPos;
+        float x = Mathf.Round(Random.Range(spawnAreaMin.x, spawnAreaMax.x));
+        float z = Mathf.Round(Random.Range(spawnAreaMin.y, spawnAreaMax.y));
+        transform.position = new Vector3(x, 0.5f, z);
     }
 }
