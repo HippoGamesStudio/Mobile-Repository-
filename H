@@ -5,43 +5,52 @@ using System.Collections.Generic;
 public class ClassicSnakeHead : NetworkBehaviour
 {
     public GameObject bodySegmentPrefab;
-    public float moveInterval = 0.2f; // шаг в секундах
+    public float moveInterval = 0.15f;
     public float gridSize = 1f;
+    public float collisionOffset = 0.1f;
 
-    private List<Transform> bodySegments = new List<Transform>();
-    private List<Vector3> positions = new List<Vector3>();
-
-    private float timer = 0f;
     private Vector3 direction = Vector3.forward;
+    private float timer;
 
-    void Start()
+    private List<Vector3> positions = new List<Vector3>();
+    private readonly SyncList<GameObject> syncedBody = new SyncList<GameObject>();
+
+    public override void OnStartClient()
     {
-        if (isLocalPlayer)
+        base.OnStartClient();
+        positions.Add(transform.position);
+
+        if (!isServer)
         {
-            positions.Add(transform.position);
+            syncedBody.Callback += OnBodySynced;
         }
+    }
+
+    private void OnBodySynced(SyncList<GameObject>.Operation op, int index, GameObject oldItem, GameObject newItem)
+    {
+        // На клиентах добавляем к списку
     }
 
     void Update()
     {
         if (!isLocalPlayer) return;
 
-        // Управление
-        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
-        {
-            if (direction != Vector3.right) direction = Vector3.left;
-        }
-        else if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
-        {
-            if (direction != Vector3.left) direction = Vector3.right;
-        }
-        else if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W))
+        // Дискретное управление
+        if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W))
         {
             if (direction != Vector3.back) direction = Vector3.forward;
         }
         else if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S))
         {
             if (direction != Vector3.forward) direction = Vector3.back;
+        }
+        else if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
+        {
+            if (direction != Vector3.right) direction = Vector3.left;
+        }
+        else if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
+        {
+            if (direction != Vector3.left) direction = Vector3.right;
         }
 
         // Движение по таймеру
@@ -55,21 +64,34 @@ public class ClassicSnakeHead : NetworkBehaviour
 
     void Move()
     {
-        Vector3 newPosition = transform.position + direction * gridSize;
+        Vector3 newPos = transform.position + direction * gridSize;
+        transform.position = newPos;
 
-        transform.position = newPosition;
-        positions.Insert(0, newPosition);
+        positions.Insert(0, newPos);
 
-        // Движение тела
-        for (int i = 0; i < bodySegments.Count; i++)
+        for (int i = 0; i < syncedBody.Count; i++)
         {
-            bodySegments[i].position = positions[Mathf.Clamp(i + 1, 0, positions.Count - 1)];
+            if (syncedBody[i] != null)
+            {
+                syncedBody[i].transform.position = positions[Mathf.Clamp(i + 1, 0, positions.Count - 1)];
+            }
         }
 
-        // Ограничиваем размер списка
-        if (positions.Count > bodySegments.Count + 1)
-        {
+        if (positions.Count > syncedBody.Count + 1)
             positions.RemoveAt(positions.Count - 1);
+
+        CheckSelfCollision();
+    }
+
+    void CheckSelfCollision()
+    {
+        for (int i = 1; i < syncedBody.Count; i++)
+        {
+            if (Vector3.Distance(transform.position, syncedBody[i].transform.position) < collisionOffset)
+            {
+                CmdResetSnake();
+                break;
+            }
         }
     }
 
@@ -86,10 +108,10 @@ public class ClassicSnakeHead : NetworkBehaviour
     [Command]
     void CmdEatFood(GameObject food)
     {
-        SnakeFood foodScript = food.GetComponent<SnakeFood>();
-        if (foodScript != null)
+        SnakeFood f = food.GetComponent<SnakeFood>();
+        if (f != null)
         {
-            foodScript.Respawn();
+            f.Respawn();
             CmdAddSegment();
         }
     }
@@ -99,15 +121,23 @@ public class ClassicSnakeHead : NetworkBehaviour
     {
         GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
         NetworkServer.Spawn(segment);
-        RpcAddSegment(segment);
+        syncedBody.Add(segment);
     }
 
-    [ClientRpc]
-    void RpcAddSegment(GameObject segment)
+    [Command]
+    void CmdResetSnake()
     {
-        bodySegments.Add(segment.transform);
+        for (int i = 0; i < syncedBody.Count; i++)
+        {
+            if (syncedBody[i] != null)
+                NetworkServer.Destroy(syncedBody[i]);
+        }
+        syncedBody.Clear();
+        positions.Clear();
+        positions.Add(transform.position);
     }
 }
+
 
 
 
