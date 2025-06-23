@@ -1,0 +1,62 @@
+using UnityEngine;
+using Mirror;
+using System.Collections.Generic;
+
+public class SnakeHead : NetworkBehaviour
+{
+    public float speed = 5f;
+    public float rotationSpeed = 180f;
+    public GameObject bodySegmentPrefab;
+
+    private List<Transform> bodySegments = new List<Transform>();
+    private float segmentSpacing = 0.5f;
+    private List<Vector3> positions = new List<Vector3>();
+
+    void Start()
+    {
+        positions.Add(transform.position);
+    }
+
+    void Update()
+    {
+        if (!isLocalPlayer) return;
+
+        float h = Input.GetAxis("Horizontal");
+        float v = Input.GetAxis("Vertical");
+
+        transform.Rotate(Vector3.up * h * rotationSpeed * Time.deltaTime);
+        transform.Translate(Vector3.forward * v * speed * Time.deltaTime);
+
+        if (Vector3.Distance(transform.position, positions[positions.Count - 1]) > segmentSpacing)
+        {
+            positions.Add(transform.position);
+            if (positions.Count > (bodySegments.Count + 1) * 5)
+                positions.RemoveAt(0);
+        }
+
+        for (int i = 0; i < bodySegments.Count; i++)
+        {
+            Vector3 point = positions[Mathf.Clamp(positions.Count - 1 - (i + 1) * 5, 0, positions.Count - 1)];
+            bodySegments[i].position = point;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            CmdAddBodySegment();
+        }
+    }
+
+    [Command]
+    void CmdAddBodySegment()
+    {
+        GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
+        NetworkServer.Spawn(segment);
+        RpcAddBodySegment(segment);
+    }
+
+    [ClientRpc]
+    void RpcAddBodySegment(GameObject segment)
+    {
+        bodySegments.Add(segment.transform);
+    }
+}
