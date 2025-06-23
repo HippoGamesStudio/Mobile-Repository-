@@ -4,90 +4,98 @@ using System.Collections.Generic;
 
 public class ClassicSnakeHead : NetworkBehaviour
 {
+    [Header("Settings")]
     public GameObject bodySegmentPrefab;
     public float moveInterval = 0.15f;
     public float gridSize = 1f;
     public float collisionOffset = 0.1f;
 
-    private Vector3 direction = Vector3.forward;
     private float timer;
+    private Vector3 direction = Vector3.forward;
 
-    private List<Vector3> positions = new List<Vector3>();
-    private readonly SyncList<GameObject> syncedBody = new SyncList<GameObject>();
+    // Список всех позиций головы и тела
+    [SyncVar] private Vector3 lastHeadPosition;
+    private List<GameObject> bodySegments = new List<GameObject>();
+    private readonly SyncList<Vector3> syncedPositions = new SyncList<Vector3>();
+
+    public override void OnStartServer()
+    {
+        base.OnStartServer();
+        syncedPositions.Clear();
+        syncedPositions.Add(transform.position);
+    }
 
     public override void OnStartClient()
     {
         base.OnStartClient();
-        positions.Add(transform.position);
-
-        if (!isServer)
-        {
-            syncedBody.Callback += OnBodySynced;
-        }
-    }
-
-    private void OnBodySynced(SyncList<GameObject>.Operation op, int index, GameObject oldItem, GameObject newItem)
-    {
-        // На клиентах добавляем к списку
+        syncedPositions.Callback += OnPositionsChanged;
     }
 
     void Update()
     {
         if (!isLocalPlayer) return;
 
-        // Дискретное управление
+        // Управление (дискретное)
         if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W))
-        {
             if (direction != Vector3.back) direction = Vector3.forward;
-        }
-        else if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S))
-        {
-            if (direction != Vector3.forward) direction = Vector3.back;
-        }
-        else if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
-        {
-            if (direction != Vector3.right) direction = Vector3.left;
-        }
-        else if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
-        {
-            if (direction != Vector3.left) direction = Vector3.right;
-        }
 
-        // Движение по таймеру
+        if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S))
+            if (direction != Vector3.forward) direction = Vector3.back;
+
+        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
+            if (direction != Vector3.right) direction = Vector3.left;
+
+        if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
+            if (direction != Vector3.left) direction = Vector3.right;
+
+        // Движение
         timer += Time.deltaTime;
         if (timer >= moveInterval)
         {
             timer = 0f;
-            Move();
+            CmdMove(direction);
         }
     }
 
-    void Move()
+    [Command]
+    void CmdMove(Vector3 dir)
     {
-        Vector3 newPos = transform.position + direction * gridSize;
-        transform.position = newPos;
+        Vector3 newHeadPos = transform.position + dir * gridSize;
+        lastHeadPosition = newHeadPos;
+        transform.position = newHeadPos;
 
-        positions.Insert(0, newPos);
+        // Обновляем список позиций
+        syncedPositions.Insert(0, newHeadPos);
+        if (syncedPositions.Count > bodySegments.Count + 1)
+            syncedPositions.RemoveAt(syncedPositions.Count - 1);
 
-        for (int i = 0; i < syncedBody.Count; i++)
+        // Обновляем позиции сегментов
+        for (int i = 0; i < bodySegments.Count; i++)
         {
-            if (syncedBody[i] != null)
-            {
-                syncedBody[i].transform.position = positions[Mathf.Clamp(i + 1, 0, positions.Count - 1)];
-            }
+            if (bodySegments[i] != null)
+                bodySegments[i].transform.position = syncedPositions[Mathf.Min(i + 1, syncedPositions.Count - 1)];
         }
-
-        if (positions.Count > syncedBody.Count + 1)
-            positions.RemoveAt(positions.Count - 1);
 
         CheckSelfCollision();
     }
 
+    void OnPositionsChanged(SyncList<Vector3>.Operation op, int index, Vector3 oldItem, Vector3 newItem)
+    {
+        // Клиенты: синхронизация позиций
+        for (int i = 0; i < bodySegments.Count; i++)
+        {
+            if (index == i + 1 && bodySegments[i] != null)
+            {
+                bodySegments[i].transform.position = newItem;
+            }
+        }
+    }
+
     void CheckSelfCollision()
     {
-        for (int i = 1; i < syncedBody.Count; i++)
+        for (int i = 1; i < bodySegments.Count; i++)
         {
-            if (Vector3.Distance(transform.position, syncedBody[i].transform.position) < collisionOffset)
+            if (Vector3.Distance(transform.position, bodySegments[i].transform.position) < collisionOffset)
             {
                 CmdResetSnake();
                 break;
@@ -120,47 +128,20 @@ public class ClassicSnakeHead : NetworkBehaviour
     void CmdAddSegment()
     {
         GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
-        NetworkServer.Spawn(segment);
-        syncedBody.Add(segment);
+        NetworkServer.Spawn(segment, connectionToClient);
+        bodySegments.Add(segment);
     }
 
     [Command]
     void CmdResetSnake()
     {
-        for (int i = 0; i < syncedBody.Count; i++)
+        foreach (var seg in bodySegments)
         {
-            if (syncedBody[i] != null)
-                NetworkServer.Destroy(syncedBody[i]);
+            if (seg != null)
+                NetworkServer.Destroy(seg);
         }
-        syncedBody.Clear();
-        positions.Clear();
-        positions.Add(transform.position);
-    }
-}
-
-
-
-
-
-using UnityEngine;
-using Mirror;
-
-public class SnakeFood : NetworkBehaviour
-{
-    public Vector2 spawnAreaMin = new Vector2(-10, -10);
-    public Vector2 spawnAreaMax = new Vector2(10, 10);
-
-    public override void OnStartServer()
-    {
-        base.OnStartServer();
-        Respawn(); // ТОЛЬКО НА СЕРВЕРЕ
-    }
-
-    [Server]
-    public void Respawn()
-    {
-        float x = Mathf.Round(Random.Range(spawnAreaMin.x, spawnAreaMax.x));
-        float z = Mathf.Round(Random.Range(spawnAreaMin.y, spawnAreaMax.y));
-        transform.position = new Vector3(x, 0.5f, z);
+        bodySegments.Clear();
+        syncedPositions.Clear();
+        syncedPositions.Add(transform.position);
     }
 }
