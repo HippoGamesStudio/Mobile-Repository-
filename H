@@ -4,59 +4,111 @@ using System.Collections.Generic;
 
 public class SnakeHead : NetworkBehaviour
 {
-    public float speed = 5f;
-    public float rotationSpeed = 180f;
+    public float moveSpeed = 2f;
+    public float turnSpeed = 90f;
     public GameObject bodySegmentPrefab;
+    public float segmentSpacing = 0.5f;
 
     private List<Transform> bodySegments = new List<Transform>();
-    private float segmentSpacing = 0.5f;
     private List<Vector3> positions = new List<Vector3>();
 
     void Start()
     {
-        positions.Add(transform.position);
+        if (isLocalPlayer)
+        {
+            positions.Add(transform.position);
+        }
     }
 
     void Update()
     {
         if (!isLocalPlayer) return;
 
-        float h = Input.GetAxis("Horizontal");
-        float v = Input.GetAxis("Vertical");
+        float h = Input.GetAxisRaw("Horizontal");
 
-        transform.Rotate(Vector3.up * h * rotationSpeed * Time.deltaTime);
-        transform.Translate(Vector3.forward * v * speed * Time.deltaTime);
+        // поворот влево/вправо
+        transform.Rotate(Vector3.up * h * turnSpeed * Time.deltaTime);
 
+        // всегда двигается вперёд
+        transform.Translate(Vector3.forward * moveSpeed * Time.deltaTime);
+
+        // записываем позицию головы
         if (Vector3.Distance(transform.position, positions[positions.Count - 1]) > segmentSpacing)
         {
             positions.Add(transform.position);
-            if (positions.Count > (bodySegments.Count + 1) * 5)
-                positions.RemoveAt(0);
         }
 
+        // обновляем позиции сегментов
         for (int i = 0; i < bodySegments.Count; i++)
         {
-            Vector3 point = positions[Mathf.Clamp(positions.Count - 1 - (i + 1) * 5, 0, positions.Count - 1)];
-            bodySegments[i].position = point;
-        }
-
-        if (Input.GetKeyDown(KeyCode.Space))
-        {
-            CmdAddBodySegment();
+            int index = Mathf.Clamp(positions.Count - 1 - (i + 1) * 5, 0, positions.Count - 1);
+            bodySegments[i].position = positions[index];
         }
     }
 
     [Command]
-    void CmdAddBodySegment()
+    public void CmdAddSegment()
     {
         GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
         NetworkServer.Spawn(segment);
-        RpcAddBodySegment(segment);
+        RpcAddSegment(segment);
     }
 
     [ClientRpc]
-    void RpcAddBodySegment(GameObject segment)
+    void RpcAddSegment(GameObject segment)
     {
         bodySegments.Add(segment.transform);
+    }
+
+    private void OnTriggerEnter(Collider other)
+    {
+        if (!isLocalPlayer) return;
+
+        if (other.CompareTag("Food"))
+        {
+            CmdEatFood(other.gameObject);
+        }
+    }
+
+    [Command]
+    void CmdEatFood(GameObject food)
+    {
+        SnakeFood foodScript = food.GetComponent<SnakeFood>();
+        if (foodScript != null)
+        {
+            foodScript.Respawn();
+            CmdAddSegment();
+        }
+    }
+}
+
+
+
+using UnityEngine;
+using Mirror;
+
+public class SnakeFood : NetworkBehaviour
+{
+    public Vector2 spawnAreaMin = new Vector2(-10, -10);
+    public Vector2 spawnAreaMax = new Vector2(10, 10);
+
+    public void Start()
+    {
+        if (isServer)
+        {
+            Respawn();
+        }
+    }
+
+    [Server]
+    public void Respawn()
+    {
+        Vector3 newPos = new Vector3(
+            Random.Range(spawnAreaMin.x, spawnAreaMax.x),
+            0.5f,
+            Random.Range(spawnAreaMax.y, spawnAreaMin.y)
+        );
+
+        transform.position = newPos;
     }
 }
