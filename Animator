@@ -1,0 +1,127 @@
+void Start()
+{
+    // Проверка настроек
+    if (character == null || poseDetector == null || webCamInput == null || display == null)
+    {
+        Debug.LogError("Character, PoseDetector, WebCamInput, or Display not assigned");
+        return;
+    }
+
+    // Инициализация веб-камеры
+    display.texture = webCamInput.WebCamTexture;
+    webCamInput.WebCamTexture.Play();
+
+    // Инициализация анимации
+    animator = character.GetComponent<Animator>();
+    if (animator == null || !animator.isHuman)
+    {
+        Debug.LogError("Character must have a Humanoid rig");
+        return;
+    }
+
+    poseHandler = new HumanPoseHandler(animator.avatar, character.transform);
+    humanPose = new HumanPose();
+    smoothedPositions = new Vector3[33];
+
+    // Маппинг ключевых точек MediaPipe к мышцам Humanoid
+    muscleMap = new Dictionary<int, int>
+    {
+        { 11, HumanBodyBones.LeftUpperArm }, // Левое плечо
+        { 12, HumanBodyBones.RightUpperArm }, // Правое плечо
+        { 13, HumanBodyBones.LeftLowerArm }, // Левый локоть
+        { 14, HumanBodyBones.RightLowerArm }, // Правый локоть
+        { 23, HumanBodyBones.LeftUpperLeg }, // Левое бедро
+        { 24, HumanBodyBones.RightUpperLeg }, // Правое бедро
+        { 25, HumanBodyBones.LeftLowerLeg }, // Левое колено
+        { 26, HumanBodyBones.RightLowerLeg } // Правое колено
+    };
+}
+
+void Update()
+{
+    // Получение данных трекинга от MediaPipe
+    var poseLandmarks = poseDetector.GetPoseLandmarks();
+    if (poseLandmarks != null && poseLandmarks.Count > 0)
+    {
+        UpdateCharacter(poseLandmarks);
+    }
+}
+
+void UpdateCharacter(IList<NormalizedLandmark> landmarks)
+{
+    try
+    {
+        // Получение текущей позы
+        poseHandler.GetHumanPose(ref humanPose);
+
+        // Обновление позиций и ротаций костей
+        foreach (var pair in muscleMap)
+        {
+            int landmarkIdx = pair.Key;
+            HumanBodyBones bone = (HumanBodyBones)pair.Value;
+
+            if (landmarkIdx < landmarks.Count)
+            {
+                var landmark = landmarks[landmarkIdx];
+                Vector3 pos = new Vector3(
+                    (landmark.X - 0.5f) * 10, // Масштабирование X
+                    (0.5f - landmark.Y) * 10, // Инверсия Y
+                    landmark.Z * 5            // Глубина Z
+                );
+
+                // Сглаживание
+                smoothedPositions[landmarkIdx] = Vector3.Lerp(smoothedPositions[landmarkIdx], pos, Time.deltaTime * 10);
+
+                // Обновление позиции кости
+                Transform boneTransform = animator.GetBoneTransform(bone);
+                if (boneTransform != null)
+                {
+                    boneTransform.position = character.transform.TransformPoint(smoothedPositions[landmarkIdx]);
+                }
+
+                // Ротация (пример для рук и ног)
+                if (landmarkIdx == 11 && landmarks.Count > 13) // Левое плечо -> локоть
+                {
+                    Vector3 elbowPos = new Vector3(
+                        (landmarks[13].X - 0.5f) * 10,
+                        (0.5f - landmarks[13].Y) * 10,
+                        landmarks[13].Z * 5
+                    );
+                    Vector3 direction = (elbowPos - smoothedPositions[landmarkIdx]).normalized;
+                    Quaternion targetRotation = Quaternion.LookRotation(direction);
+                    boneTransform.rotation = Quaternion.Slerp(boneTransform.rotation, targetRotation, Time.deltaTime * 5);
+                }
+                else if (landmarkIdx == 12 && landmarks.Count > 14) // Правое плечо -> локоть
+                {
+                    Vector3 elbowPos = new Vector3(
+                        (landmarks[14].X - 0.5f) * 10,
+                        (0.5f - landmarks[14].Y) * 10,
+                        landmarks[14].Z * 5
+                    );
+                    Vector3 direction = (elbowPos - smoothedPositions[landmarkIdx]).normalized;
+                    Quaternion targetRotation = Quaternion.LookRotation(direction);
+                    boneTransform.rotation = Quaternion.Slerp(boneTransform.rotation, targetRotation, Time.deltaTime * 5);
+                }
+            }
+        }
+
+        // Применение позы
+        poseHandler.SetHumanPose(ref humanPose);
+    }
+    catch (System.Exception e)
+    {
+        Debug.LogError($"Error updating pose: {e.Message}");
+    }
+}
+
+void OnDestroy()
+{
+    if (webCamInput != null && webCamInput.WebCamTexture != null)
+    {
+        webCamInput.WebCamTexture.Stop();
+    }
+    if (poseHandler != null)
+    {
+        poseHandler.Dispose();
+    }
+}
