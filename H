@@ -1,178 +1,56 @@
 using UnityEngine;
-using Mirror;
-using System.Collections.Generic;
+using UnityEngine.Networking;
+using System.Collections;
 
-public class ClassicSnakeHead : NetworkBehaviour
+[System.Serializable]
+public class Landmark { public float x, y, z; }
+[System.Serializable]
+public class HandData { public Landmark[][] hands; }
+
+public class HandTracker : MonoBehaviour
 {
-    [Header("Settings")]
-    public GameObject bodySegmentPrefab;
-    public float moveInterval = 0.15f;
-    public float gridSize = 1f;
-    public float collisionOffset = 0.1f;
+    public string serverUrl = "https://your-server.onrender.com/process";
+    WebCamTexture webcam;
+    public Transform[] points; // присвоить 21 трансформ
 
-    private float timer;
-    private Vector3 direction = Vector3.forward;
-
-    [SyncVar] private Vector3 syncedHeadPosition;
-    private readonly SyncList<Vector3> syncedPositions = new SyncList<Vector3>();
-    private List<GameObject> bodySegments = new List<GameObject>();
-
-    public override void OnStartServer()
+    void Start()
     {
-        base.OnStartServer();
-        syncedPositions.Clear();
-        syncedPositions.Add(transform.position);
-        syncedHeadPosition = transform.position;
+        webcam = new WebCamTexture();
+        webcam.Play();
+        StartCoroutine(SendLoop());
     }
 
-    public override void OnStartClient()
+    IEnumerator SendLoop()
     {
-        base.OnStartClient();
-        syncedPositions.Callback += OnPositionsChanged;
-    }
-
-    void Update()
-    {
-        if (!isLocalPlayer) return;
-
-        // Дискретное управление
-        if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W))
-            if (direction != Vector3.back) direction = Vector3.forward;
-
-        if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S))
-            if (direction != Vector3.forward) direction = Vector3.back;
-
-        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A))
-            if (direction != Vector3.right) direction = Vector3.left;
-
-        if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D))
-            if (direction != Vector3.left) direction = Vector3.right;
-
-        timer += Time.deltaTime;
-        if (timer >= moveInterval)
+        while (true)
         {
-            timer = 0f;
-            CmdMove(direction);
+            yield return new WaitForSeconds(0.2f);
+            Texture2D tex = new Texture2D(webcam.width, webcam.height);
+            tex.SetPixels(webcam.GetPixels());
+            tex.Apply();
+
+            byte[] jpg = tex.EncodeToJPG();
+            UnityWebRequest www = UnityWebRequest.Put(serverUrl, jpg);
+            www.method = "POST";
+            www.SetRequestHeader("Content-Type", "image/jpeg");
+            yield return www.SendWebRequest();
+
+            if (www.result == UnityWebRequest.Result.Success)
+                AnimateHands(www.downloadHandler.text);
         }
     }
 
-    void LateUpdate()
+    void AnimateHands(string json)
     {
-        if (!isLocalPlayer)
+        var data = JsonUtility.FromJson<HandData>(json);
+        if (data.hands.Length == 0) return;
+        var hand = data.hands[0];
+        for (int i = 0; i < hand.Length && i < points.Length; i++)
         {
-            transform.position = syncedHeadPosition;
-
-            // Поворот головы
-            if (syncedPositions.Count >= 2)
-            {
-                Vector3 lookDir = syncedPositions[0] - syncedPositions[1];
-                if (lookDir != Vector3.zero)
-                    transform.forward = lookDir.normalized;
-            }
-
-            // Обновление сегментов
-            for (int i = 0; i < bodySegments.Count; i++)
-            {
-                if (i + 1 < syncedPositions.Count)
-                {
-                    var segment = bodySegments[i];
-                    segment.transform.position = syncedPositions[i + 1];
-
-                    float t = (float)(i + 1) / (bodySegments.Count + 1);
-                    float scale = Mathf.Lerp(1f, 0.3f, t);
-                    segment.transform.localScale = new Vector3(scale, scale, scale);
-                }
-            }
+            var lm = hand[i];
+            float x = (lm.x - .5f) * 2f;
+            float y = (lm.y - .5f) * 2f;
+            points[i].localPosition = new Vector3(x, y, -lm.z);
         }
-    }
-
-    [Command]
-    void CmdMove(Vector3 dir)
-    {
-        Vector3 newPos = transform.position + dir * gridSize;
-        transform.position = newPos;
-        syncedHeadPosition = newPos;
-
-        // Поворот головы на сервере
-        transform.forward = dir;
-
-        syncedPositions.Insert(0, newPos);
-        if (syncedPositions.Count > bodySegments.Count + 1)
-            syncedPositions.RemoveAt(syncedPositions.Count - 1);
-
-        for (int i = 0; i < bodySegments.Count; i++)
-        {
-            if (i + 1 < syncedPositions.Count)
-            {
-                var segment = bodySegments[i];
-                segment.transform.position = syncedPositions[i + 1];
-
-                float t = (float)(i + 1) / (bodySegments.Count + 1);
-                float scale = Mathf.Lerp(1f, 0.3f, t);
-                segment.transform.localScale = new Vector3(scale, scale, scale);
-            }
-        }
-
-        CheckSelfCollision();
-    }
-
-    void OnPositionsChanged(SyncList<Vector3>.Operation op, int index, Vector3 oldItem, Vector3 newItem)
-    {
-        // Обработка обновлений списка позиций (ничего не делаем — обновляется в LateUpdate)
-    }
-
-    void CheckSelfCollision()
-    {
-        for (int i = 0; i < bodySegments.Count; i++)
-        {
-            if (Vector3.Distance(transform.position, bodySegments[i].transform.position) < collisionOffset)
-            {
-                CmdResetSnake();
-                break;
-            }
-        }
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (!isLocalPlayer) return;
-
-        if (other.CompareTag("Food"))
-        {
-            CmdEatFood(other.gameObject);
-        }
-    }
-
-    [Command]
-    void CmdEatFood(GameObject food)
-    {
-        SnakeFood f = food.GetComponent<SnakeFood>();
-        if (f != null)
-        {
-            f.Respawn();
-            CmdAddSegment();
-        }
-    }
-
-    [Command]
-    void CmdAddSegment()
-    {
-        GameObject segment = Instantiate(bodySegmentPrefab, transform.position, Quaternion.identity);
-        NetworkServer.Spawn(segment, connectionToClient);
-        bodySegments.Add(segment);
-    }
-
-    [Command]
-    void CmdResetSnake()
-    {
-        foreach (var seg in bodySegments)
-        {
-            if (seg != null)
-                NetworkServer.Destroy(seg);
-        }
-
-        bodySegments.Clear();
-        syncedPositions.Clear();
-        syncedPositions.Add(transform.position);
     }
 }
