@@ -1,3 +1,7 @@
+using UnityEngine; using Mediapipe.Unity; using System.Collections.Generic; using UnityEngine.UI;
+
+public class PoseAnimator : MonoBehaviour { public GameObject character; // 3D-персонаж с Humanoid ригом public PoseLandmarkDetector poseDetector; // Компонент MediaPipe public WebCamInput webCamInput; // Компонент для захвата видео public RawImage display; // Для отображения видео private Animator animator; // Для управления Humanoid private HumanPoseHandler poseHandler; // Для управления позой private HumanPose humanPose; // Текущая поза private Vector3[] smoothedPositions; // Для сглаживания private Dictionary<int, int> muscleMap; // Маппинг MediaPipe к Humanoid мышцам
+
 void Start()
 {
     // Проверка настроек
@@ -124,4 +128,6 @@ void OnDestroy()
     {
         poseHandler.Dispose();
     }
+}
+
 }
