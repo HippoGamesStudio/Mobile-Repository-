@@ -1,0 +1,39 @@
+using UnityEngine; 
+using System.Collections.Generic;
+
+public class LineRendererSetup : MonoBehaviour {
+public List landmarkObjects; // Кости или пустые Transform для точек private List lineRenderers = new List(); private readonly int[,] connections = new int[,] { {0, 1}, {1, 2}, {2, 3}, {3, 7}, // Голова {0, 4}, {4, 5}, {5, 6}, {6, 8}, // Голова {9, 10}, // Торс {11, 12}, {11, 13}, {13, 15}, {15, 17}, // Левая рука {12, 14}, {14, 16}, {16, 18}, // Правая рука {11, 23}, {12, 24}, {23, 24}, // Таз {23, 25}, {25, 27}, {27, 29}, {29, 31}, // Левая нога {24, 26}, {26, 28}, {28, 30}, {30, 32} // Правая нога 
+};
+
+void Start()
+{
+    for (int i = 0; i < connections.GetLength(0); i++)
+    {
+        GameObject lineObj = new GameObject($"Line_{i}");
+        LineRenderer lr = lineObj.AddComponent<LineRenderer>();
+        lr.positionCount = 2;
+        lr.startWidth = 0.1f;
+        lr.endWidth = 0.1f;
+        lr.material = new Material(Shader.Find("Sprites/Default"));
+        lr.startColor = Color.white;
+        lr.endColor = Color.white;
+        lineRenderers.Add(lr);
+    }
+}
+
+void Update()
+{
+    for (int i = 0; i < connections.GetLength(0); i++)
+    {
+        int startIdx = connections[i, 0];
+        int endIdx = connections[i, 1];
+        if (startIdx < landmarkObjects.Count && endIdx < landmarkObjects.Count &&
+            landmarkObjects[startIdx] != null && landmarkObjects[endIdx] != null)
+        {
+            lineRenderers[i].SetPosition(0, landmarkObjects[startIdx].position);
+            lineRenderers[i].SetPosition(1, landmarkObjects[endIdx].position);
+        }
+    }
+}
+
+}
