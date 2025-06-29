@@ -1,133 +1,271 @@
-using UnityEngine; using Mediapipe.Unity; using System.Collections.Generic; using UnityEngine.UI;
+import requests
+import customtkinter as ctk
+from PIL import Image, ImageTk
+import io
+import threading
+import datetime
+import os
 
-public class PoseAnimator : MonoBehaviour { public GameObject character; // 3D-персонаж с Humanoid ригом public PoseLandmarkDetector poseDetector; // Компонент MediaPipe public WebCamInput webCamInput; // Компонент для захвата видео public RawImage display; // Для отображения видео private Animator animator; // Для управления Humanoid private HumanPoseHandler poseHandler; // Для управления позой private HumanPose humanPose; // Текущая поза private Vector3[] smoothedPositions; // Для сглаживания private Dictionary<int, int> muscleMap; // Маппинг MediaPipe к Humanoid мышцам
+# Настройка внешнего вида
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("green")
 
-void Start()
-{
-    // Проверка настроек
-    if (character == null || poseDetector == null || webCamInput == null || display == null)
-    {
-        Debug.LogError("Character, PoseDetector, WebCamInput, or Display not assigned");
-        return;
-    }
-
-    // Инициализация веб-камеры
-    display.texture = webCamInput.WebCamTexture;
-    webCamInput.WebCamTexture.Play();
-
-    // Инициализация анимации
-    animator = character.GetComponent<Animator>();
-    if (animator == null || !animator.isHuman)
-    {
-        Debug.LogError("Character must have a Humanoid rig");
-        return;
-    }
-
-    poseHandler = new HumanPoseHandler(animator.avatar, character.transform);
-    humanPose = new HumanPose();
-    smoothedPositions = new Vector3[33];
-
-    // Маппинг ключевых точек MediaPipe к мышцам Humanoid
-    muscleMap = new Dictionary<int, int>
-    {
-        { 11, HumanBodyBones.LeftUpperArm }, // Левое плечо
-        { 12, HumanBodyBones.RightUpperArm }, // Правое плечо
-        { 13, HumanBodyBones.LeftLowerArm }, // Левый локоть
-        { 14, HumanBodyBones.RightLowerArm }, // Правый локоть
-        { 23, HumanBodyBones.LeftUpperLeg }, // Левое бедро
-        { 24, HumanBodyBones.RightUpperLeg }, // Правое бедро
-        { 25, HumanBodyBones.LeftLowerLeg }, // Левое колено
-        { 26, HumanBodyBones.RightLowerLeg } // Правое колено
-    };
-}
-
-void Update()
-{
-    // Получение данных трекинга от MediaPipe
-    var poseLandmarks = poseDetector.GetPoseLandmarks();
-    if (poseLandmarks != null && poseLandmarks.Count > 0)
-    {
-        UpdateCharacter(poseLandmarks);
+# Артикулы товаров на Wildberries и URL изображений
+DOSHIRAK_FLAVORS = {
+    "Говядина": {
+        "nm_id": 177954381,
+        "image_url": "https://images.wbstatic.net/c516x688/new/28200000/28200246-1.jpg"
+    },
+    "Курица": {
+        "nm_id": 177960855,
+        "image_url": "https://images.wbstatic.net/c516x688/new/28200000/28200247-1.jpg"
+    },
+    "Свинина": {
+        "nm_id": 346722170,
+        "image_url": "https://images.wbstatic.net/c516x688/new/28200000/28200248-1.jpg"
+    },
+    "Креветки": {
+        "nm_id": 181186105,
+        "image_url": "https://images.wbstatic.net/c516x688/new/28200000/28200249-1.jpg"
+    },
+    "Грибы": {
+        "nm_id": 428474171,
+        "image_url": "https://images.wbstatic.net/c516x688/new/28200000/28200250-1.jpg"
     }
 }
 
-void UpdateCharacter(IList<NormalizedLandmark> landmarks)
-{
-    try
-    {
-        // Получение текущей позы
-        poseHandler.GetHumanPose(ref humanPose);
+class DoshirakPriceApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        
+        # Настройка главного окна
+        self.title("🍜 Доширак Монитор")
+        self.geometry("1000x700")
+        self.resizable(False, False)
+        
+        # Создаем папку для кэша изображений
+        self.cache_dir = "doshirak_images"
+        os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Создаем основной интерфейс
+        self.create_widgets()
+        
+        # Загружаем цены при запуске
+        self.update_prices()
+        
+        # Загружаем изображения
+        self.load_images()
 
-        // Обновление позиций и ротаций костей
-        foreach (var pair in muscleMap)
-        {
-            int landmarkIdx = pair.Key;
-            HumanBodyBones bone = (HumanBodyBones)pair.Value;
-
-            if (landmarkIdx < landmarks.Count)
-            {
-                var landmark = landmarks[landmarkIdx];
-                Vector3 pos = new Vector3(
-                    (landmark.X - 0.5f) * 10, // Масштабирование X
-                    (0.5f - landmark.Y) * 10, // Инверсия Y
-                    landmark.Z * 5            // Глубина Z
-                );
-
-                // Сглаживание
-                smoothedPositions[landmarkIdx] = Vector3.Lerp(smoothedPositions[landmarkIdx], pos, Time.deltaTime * 10);
-
-                // Обновление позиции кости
-                Transform boneTransform = animator.GetBoneTransform(bone);
-                if (boneTransform != null)
-                {
-                    boneTransform.position = character.transform.TransformPoint(smoothedPositions[landmarkIdx]);
-                }
-
-                // Ротация (пример для рук и ног)
-                if (landmarkIdx == 11 && landmarks.Count > 13) // Левое плечо -> локоть
-                {
-                    Vector3 elbowPos = new Vector3(
-                        (landmarks[13].X - 0.5f) * 10,
-                        (0.5f - landmarks[13].Y) * 10,
-                        landmarks[13].Z * 5
-                    );
-                    Vector3 direction = (elbowPos - smoothedPositions[landmarkIdx]).normalized;
-                    Quaternion targetRotation = Quaternion.LookRotation(direction);
-                    boneTransform.rotation = Quaternion.Slerp(boneTransform.rotation, targetRotation, Time.deltaTime * 5);
-                }
-                else if (landmarkIdx == 12 && landmarks.Count > 14) // Правое плечо -> локоть
-                {
-                    Vector3 elbowPos = new Vector3(
-                        (landmarks[14].X - 0.5f) * 10,
-                        (0.5f - landmarks[14].Y) * 10,
-                        landmarks[14].Z * 5
-                    );
-                    Vector3 direction = (elbowPos - smoothedPositions[landmarkIdx]).normalized;
-                    Quaternion targetRotation = Quaternion.LookRotation(direction);
-                    boneTransform.rotation = Quaternion.Slerp(boneTransform.rotation, targetRotation, Time.deltaTime * 5);
-                }
+    def create_widgets(self):
+        # Заголовок приложения
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(pady=(15, 5))
+        
+        self.title_label = ctk.CTkLabel(
+            self.header_frame, 
+            text="🍜 ДОШИРАК МОНИТОР",
+            font=("Arial", 28, "bold"),
+            text_color="#D32F2F"
+        )
+        self.title_label.pack(side="left", padx=10)
+        
+        self.subtitle_label = ctk.CTkLabel(
+            self.header_frame, 
+            text="Следи за лучшими ценами!",
+            font=("Arial", 16),
+            text_color="#757575"
+        )
+        self.subtitle_label.pack(side="left", padx=10)
+        
+        # Фрейм для продуктов
+        self.products_frame = ctk.CTkScrollableFrame(
+            self, 
+            width=900, 
+            height=500,
+            fg_color="#FFFDE7",
+            corner_radius=15
+        )
+        self.products_frame.pack(pady=10, padx=20, fill="both", expand=True)
+        
+        # Создаем карточки для каждого вкуса
+        self.product_cards = {}
+        for flavor, data in DOSHIRAK_FLAVORS.items():
+            card = ctk.CTkFrame(
+                self.products_frame, 
+                corner_radius=12,
+                fg_color="#FFFFFF",
+                border_width=1,
+                border_color="#E0E0E0"
+            )
+            card.pack(pady=12, fill="x", padx=10)
+            
+            # Изображение (пока заглушка)
+            image_label = ctk.CTkLabel(card, text="", width=120, height=120)
+            image_label.grid(row=0, column=0, rowspan=2, padx=15, pady=10)
+            
+            # Название вкуса
+            name_label = ctk.CTkLabel(
+                card, 
+                text=flavor,
+                font=("Arial", 20, "bold"),
+                text_color="#5D4037",
+                anchor="w"
+            )
+            name_label.grid(row=0, column=1, padx=(0,20), pady=(15,0), sticky="w")
+            
+            # Цена
+            price_label = ctk.CTkLabel(
+                card, 
+                text="Загрузка...",
+                font=("Arial", 24, "bold"),
+                text_color="#388E3C"
+            )
+            price_label.grid(row=1, column=1, padx=(0,20), pady=(0,15), sticky="w")
+            
+            # Сохраняем ссылки
+            self.product_cards[flavor] = {
+                "frame": card,
+                "price_label": price_label,
+                "image_label": image_label
             }
-        }
+        
+        # Панель управления
+        self.control_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.control_frame.pack(pady=(5, 15))
+        
+        # Кнопка обновления
+        self.refresh_btn = ctk.CTkButton(
+            self.control_frame,
+            text="🔄 ОБНОВИТЬ ЦЕНЫ",
+            command=self.update_prices,
+            font=("Arial", 16),
+            fg_color="#43A047",
+            hover_color="#2E7D32",
+            height=40,
+            width=200,
+            corner_radius=10
+        )
+        self.refresh_btn.pack(side="left", padx=10)
+        
+        # Статус бар
+        self.status_bar = ctk.CTkLabel(
+            self.control_frame, 
+            text="Загрузка данных...",
+            font=("Arial", 12),
+            text_color="#757575"
+        )
+        self.status_bar.pack(side="left", padx=10)
 
-        // Применение позы
-        poseHandler.SetHumanPose(ref humanPose);
-    }
-    catch (System.Exception e)
-    {
-        Debug.LogError($"Error updating pose: {e.Message}");
-    }
-}
+    def load_images(self):
+        """Загружаем изображения для каждого вкуса"""
+        for flavor, data in DOSHIRAK_FLAVORS.items():
+            threading.Thread(target=self._load_image, args=(flavor, data["image_url"]), daemon=True).start()
 
-void OnDestroy()
-{
-    if (webCamInput != null && webCamInput.WebCamTexture != null)
-    {
-        webCamInput.WebCamTexture.Stop();
-    }
-    if (poseHandler != null)
-    {
-        poseHandler.Dispose();
-    }
-}
+    def _load_image(self, flavor, url):
+        """Загружаем и обрабатываем изображение"""
+        try:
+            # Проверяем кэш
+            cache_path = os.path.join(self.cache_dir, f"{flavor}.jpg")
+            
+            if os.path.exists(cache_path):
+                # Используем кэшированное изображение
+                image = Image.open(cache_path)
+            else:
+                # Загружаем новое изображение
+                response = requests.get(url)
+                image_data = response.content
+                image = Image.open(io.BytesIO(image_data))
+                # Сохраняем в кэш
+                image.save(cache_path)
+            
+            # Изменяем размер и делаем круглые углы
+            image = image.resize((120, 120), Image.LANCZOS)
+            image = self._round_corners(image, radius=15)
+            
+            # Конвертируем для CTk
+            ctk_image = ctk.CTkImage(
+                light_image=image,
+                size=(120, 120)
+            )
+            
+            # Обновляем UI
+            self.after(0, self._update_image, flavor, ctk_image)
+            
+        except Exception as e:
+            print(f"Ошибка загрузки изображения: {e}")
 
-}
+    def _round_corners(self, image, radius=20):
+        """Создаем изображение с круглыми углами"""
+        mask = Image.new('L', (120, 120), 0)
+        mask_draw = Image.new('L', (120, 120), 0)
+        draw = Image.new('L', (120, 120), 0)
+        draw = ImageDraw.Draw(draw)
+        draw.rounded_rectangle((0, 0, 120, 120), radius=radius, fill=255)
+        mask = ImageChops.lighter(mask, draw)
+        
+        result = image.copy()
+        result.putalpha(mask)
+        return result
+
+    def _update_image(self, flavor, ctk_image):
+        """Обновляем изображение в UI"""
+        if flavor in self.product_cards:
+            self.product_cards[flavor]["image_label"].configure(image=ctk_image)
+
+    def get_price(self, nm_id):
+        """Получает цену товара по артикулу Wildberries"""
+        api_url = f"https://card.wb.ru/cards/detail?nm={nm_id}"
+        try:
+            response = requests.get(api_url)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data["data"]["products"]:
+                price = data["data"]["products"][0]["salePriceU"] / 100
+                return price
+            return None
+        except:
+            return None
+
+    def update_prices(self):
+        """Обновляет цены в интерфейсе"""
+        self.refresh_btn.configure(state="disabled", text="⏳ ОБНОВЛЕНИЕ...")
+        self.status_bar.configure(text="Обновление цен...")
+        
+        # Запускаем в отдельном потоке
+        threading.Thread(target=self._fetch_prices, daemon=True).start()
+
+    def _fetch_prices(self):
+        """Получает цены и обновляет интерфейс"""
+        prices = {}
+        for flavor, data in DOSHIRAK_FLAVORS.items():
+            price = self.get_price(data["nm_id"])
+            prices[flavor] = price
+        
+        # Обновляем интерфейс в основном потоке
+        self.after(0, self._update_ui, prices)
+
+    def _update_ui(self, prices):
+        """Обновляет пользовательский интерфейс с новыми ценами"""
+        for flavor, price in prices.items():
+            card = self.product_cards[flavor]
+            if price is not None:
+                card["price_label"].configure(text=f"{price:.2f} ₽")
+                # Подсветка выгодных цен
+                if price < 60:
+                    card["price_label"].configure(text_color="#D32F2F")
+                    card["frame"].configure(border_color="#FFCDD2")
+                else:
+                    card["price_label"].configure(text_color="#388E3C")
+                    card["frame"].configure(border_color="#C8E6C9")
+            else:
+                card["price_label"].configure(text="Ошибка", text_color="#757575")
+        
+        # Обновляем статус бар
+        now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        self.status_bar.configure(text=f"Цены обновлены: {now}")
+        self.refresh_btn.configure(state="normal", text="🔄 ОБНОВИТЬ ЦЕНЫ")
+
+if __name__ == "__main__":
+    app = DoshirakPriceApp()
+    app.mainloop()
